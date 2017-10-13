@@ -1,43 +1,31 @@
 package logs
 
 import (
+	"bytes"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"runtime"
+	"sync"
+	"time"
 )
 
-const (
-	_debug = 0
-	_info  = 1
-	_warn  = 2
-	_error = 3
-)
-
-var default_logger *logger = nil
-
-type logger struct {
-	level   int
-	console *log.Logger
-	file    *log.Logger
-}
+var logger *Logger = nil
 
 func init() {
-	//fmt.Println("init logs ...")
-	var _logger = logger{
-		level: 0,
-	}
-
-	var consoles = []io.Writer{
+	var writers = []io.Writer{
 		os.Stdout,
 	}
-	_logger.console = log.New(io.MultiWriter(consoles...), "[devel] ", log.Ldate|log.Lmicroseconds|log.Lshortfile)
-
-	default_logger = &_logger
+	logger = &Logger{
+		out:      io.MultiWriter(writers...),
+		out_type: terminal,
+	}
 }
 
 const (
+	/*color format
+	"\x1b[0;%dm%s\x1b[0m"
+	*/
 	color_text_black = iota + 30
 	color_text_red
 	color_text_green
@@ -48,9 +36,59 @@ const (
 	color_text_white
 )
 
-func color_text(color int, str string) string {
+const (
+	/*out type*/
+	terminal = 0
+	file     = 1
+)
+
+type Logger struct {
+	mu       sync.Mutex
+	out      io.Writer
+	out_type uint
+}
+
+func New(out io.Writer) *Logger {
+	var l = &Logger{
+		out:      out,
+		out_type: file,
+	}
+	return l
+}
+
+func (l *Logger) Output(pretty string, prefix string, calldepth int, s string) error {
+	var now = time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var str = fmt.Sprintf(pretty, Format(prefix, calldepth, now, s))
+	var _, err = l.out.Write([]byte(str))
+	return err
+}
+
+var Format = func(prefix string, calldepth int, t time.Time, s string) string {
+	var _, file_name, line_number, ok = runtime.Caller(calldepth)
+	if !ok {
+		file_name = "???"
+		line_number = 0
+	}
+	var buf bytes.Buffer
+
+	buf.WriteString(prefix)
+	var fstr = t.Format("2006-01-02 15:04:05.000000000")
+	buf.WriteString(fstr)
+	buf.Write([]byte(" "))
+	buf.WriteString(file_name)
+	buf.Write([]byte(":"))
+	buf.WriteString(fmt.Sprintf("%d", line_number))
+	buf.Write([]byte(" > "))
+	buf.WriteString(s)
+
+	return buf.String()
+}
+
+func color_format(color int) string {
 	if runtime.GOOS == "windows" {
-		return str
+		return "%s"
 	}
 
 	var format = "\x1b[0;%dm%s\x1b[0m"
@@ -63,94 +101,19 @@ func color_text(color int, str string) string {
 		color_text_magenta,
 		color_text_cyan,
 		color_text_white:
-		return fmt.Sprintf(format, color, str)
+		return fmt.Sprintf(format, color, "%s")
 	default:
-		return str
+		return "%s"
 	}
 }
 
-func Debug(format string, args ...interface{}) {
-	if default_logger.level > _debug {
-		return
-	}
+func Debug(v interface{}) {
+	if logger != nil {
+		var pretty = "%s"
+		if logger.out_type == terminal {
+			pretty = color_format(color_text_yellow)
+		}
 
-	var _format = "[DEBUG]▸%s"
-	if default_logger.console != nil {
-		default_logger.console.Output(2,
-			color_text(
-				color_text_green,
-				fmt.Sprintf(_format, fmt.Sprintf(format, args...))))
-	}
-
-	if default_logger.file != nil {
-		default_logger.file.Output(
-			2,
-			fmt.Sprintf(_format, fmt.Sprintf(format, args...)))
-	}
-}
-func Info(format string, args ...interface{}) {
-	if default_logger.level > _info {
-		return
-	}
-
-	var _format = "[INFO]▸%s"
-	if default_logger.console != nil {
-		default_logger.console.Output(
-			2,
-			color_text(
-				color_text_white,
-				fmt.Sprintf(_format, fmt.Sprintf(format, args...))))
-	}
-
-	if default_logger.file != nil {
-		default_logger.file.Output(
-			2,
-			fmt.Sprintf(_format, fmt.Sprintf(format, args...)))
-	}
-}
-func Warn(format string, args ...interface{}) {
-	if default_logger.level > _warn {
-		return
-	}
-
-	var _format = "[WARN]▸%s"
-	if default_logger.console != nil {
-		default_logger.console.Output(
-			2,
-			color_text(
-				color_text_yellow,
-				fmt.Sprintf(_format, fmt.Sprintf(format, args...))))
-	}
-
-	if default_logger.file != nil {
-		default_logger.file.Output(
-			2,
-			fmt.Sprintf(_format, fmt.Sprintf(format, args...)))
-	}
-}
-func Error(format string, args ...interface{}) {
-	if default_logger.level > _error {
-		return
-	}
-
-	var _format = "[ERROR]▸%s"
-	if default_logger.console != nil {
-		var log_info = color_text(
-			color_text_red,
-			fmt.Sprintf(_format, fmt.Sprintf(format, args...)))
-		default_logger.console.Output(
-			2,
-			log_info)
-
-		panic(log_info)
-	}
-
-	if default_logger.file != nil {
-		var log_info = fmt.Sprintf(_format, fmt.Sprintf(format, args...))
-		default_logger.file.Output(
-			2,
-			log_info)
-
-		panic(log_info)
+		logger.Output(pretty, "[DEBUG]▸ ", 2, fmt.Sprintln(v))
 	}
 }

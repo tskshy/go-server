@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"time"
 )
 
@@ -78,4 +81,14 @@ func Type(v interface{}) (typ string) {
 		typ = fmt.Sprintf("%T", vt)
 	}
 	return
+}
+
+func BinPath() string {
+	var s, e = exec.LookPath(os.Args[0])
+	if e != nil {
+		panic(e)
+	}
+
+	var dir = filepath.Dir(s)
+	return dir
 }
